@@ -1,0 +1,15 @@
+{
+  "name": "kit-and-ella",
+  "version": "1.0.0",
+  "description": "Kit & Corvus - Telegram bots powered by Claude API",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "dotenv": "^16.4.7",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}

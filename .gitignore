@@ -1,0 +1,5 @@
+node_modules/
+.env
+prompts/kit-system.txt
+prompts/corvus-system.txt
+*.log
