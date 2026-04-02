@@ -1,5 +1,6 @@
 const config = require('./config');
 const KitBot = require('./kit-bot');
+const CorvusBot = require('./corvus-bot');
 
 // Validate required env vars
 const required = ['ANTHROPIC_API_KEY', 'TELEGRAM_KIT_TOKEN'];
@@ -12,10 +13,20 @@ if (missing.length > 0) {
 
 async function main() {
   console.log('Starting Kit & Ella system...');
-  console.log(`Kit model: ${config.kit.model} (temp: ${config.kit.temperature})`);
 
+  // Start Kit (always)
+  console.log(`Kit: ${config.kit.model} (temp: ${config.kit.temperature})`);
   const kit = new KitBot();
   await kit.start();
+
+  // Start Corvus (if token is provided)
+  if (process.env.TELEGRAM_CORVUS_TOKEN) {
+    console.log(`Corvus: ${config.corvus.model} (temp: ${config.corvus.temperature})`);
+    const corvus = new CorvusBot();
+    await corvus.start();
+  } else {
+    console.log('Corvus: skipped (no TELEGRAM_CORVUS_TOKEN)');
+  }
 
   console.log('System is ready.');
 }
