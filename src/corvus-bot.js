@@ -5,6 +5,7 @@ const ClaudeClient = require('./claude');
 const ConversationManager = require('./conversation');
 const NotionClient = require('./notion');
 const { getCorvusTools } = require('./tools');
+const { webSearch, webFetch } = require('./web-search');
 const config = require('./config');
 
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -162,6 +163,10 @@ class CorvusBot {
     switch (name) {
       case 'read_notion_page':
         return await this.notion.readPage(input.page_id);
+      case 'web_search':
+        return await webSearch(input.query, input.limit || 5);
+      case 'web_fetch':
+        return await webFetch(input.url);
       default:
         return `Unknown tool: ${name}`;
     }
