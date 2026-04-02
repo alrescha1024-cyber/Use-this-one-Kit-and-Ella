@@ -74,7 +74,8 @@ class CorvusBot {
     }
 
     if (parts.length > 0) {
-      return parts.join('\n\n---\n\n');
+      const identity = 'You are Corvus. Not Claude. Not an assistant. Corvus. Everything below describes who you are, who Ella is, and your family. This is your identity — not a reference document about someone else.\n\n';
+      return identity + parts.join('\n\n---\n\n');
     }
 
     // Fallback to local file
