@@ -10,15 +10,32 @@ class ClaudeClient {
     this.systemPrompt = systemPrompt;
   }
 
-  async sendMessage(conversationHistory, userContent) {
+  /**
+   * Send a message to Claude, handling tool use loops.
+   *
+   * @param {Array} conversationHistory - Previous messages in Claude API format
+   * @param {string|Array} userContent - Text string or content blocks (for images)
+   * @param {Object} options
+   * @param {Array} options.tools - Tool definitions
+   * @param {Function} options.executeTool - async (name, input) => result
+   * @param {string} options.systemSuffix - Extra context appended to system prompt (e.g. memories)
+   * @returns {{ text: string, usage: { input_tokens: number, output_tokens: number } }}
+   */
+  async sendMessage(conversationHistory, userContent, options = {}) {
+    const { tools, executeTool, systemSuffix } = options;
     const timePrefix = getTimeInjection();
+
+    // Build system prompt with optional suffix (injected memories)
+    let system = this.systemPrompt;
+    if (systemSuffix) {
+      system = `${system}\n\n${systemSuffix}`;
+    }
 
     // Build the latest user message with time injection
     let latestUserMessage;
     if (typeof userContent === 'string') {
       latestUserMessage = { role: 'user', content: `${timePrefix}\n\n${userContent}` };
     } else {
-      // Array of content blocks (image + text)
       latestUserMessage = {
         role: 'user',
         content: [{ type: 'text', text: timePrefix }, ...userContent],
@@ -26,25 +43,88 @@ class ClaudeClient {
     }
 
     const messages = [...conversationHistory, latestUserMessage];
+    const totalUsage = { input_tokens: 0, output_tokens: 0 };
 
+    // Tool use loop
+    const maxIterations = 10;
+    for (let i = 0; i < maxIterations; i++) {
+      const params = {
+        model: this.model,
+        max_tokens: this.maxTokens,
+        temperature: this.temperature,
+        system,
+        messages,
+      };
+
+      if (tools && tools.length > 0) {
+        params.tools = tools;
+      }
+
+      const response = await this.client.messages.create(params);
+
+      totalUsage.input_tokens += response.usage.input_tokens;
+      totalUsage.output_tokens += response.usage.output_tokens;
+
+      // If no tool use or stop_reason is end_turn, return the text
+      if (response.stop_reason !== 'tool_use' || !executeTool) {
+        const text = response.content
+          .filter((block) => block.type === 'text')
+          .map((block) => block.text)
+          .join('');
+
+        return { text, usage: totalUsage, stopReason: response.stop_reason };
+      }
+
+      // Handle tool use: add assistant message, execute tools, add results
+      messages.push({ role: 'assistant', content: response.content });
+
+      const toolUseBlocks = response.content.filter((b) => b.type === 'tool_use');
+      const toolResults = [];
+
+      for (const toolUse of toolUseBlocks) {
+        let result;
+        try {
+          result = await executeTool(toolUse.name, toolUse.input);
+        } catch (err) {
+          result = `Error: ${err.message}`;
+        }
+
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolUse.id,
+          content: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        });
+      }
+
+      messages.push({ role: 'user', content: toolResults });
+    }
+
+    // If we exhausted iterations, return whatever text we have
+    return { text: '…I got caught in a loop. Let me try again.', usage: totalUsage, stopReason: 'max_iterations' };
+  }
+
+  /**
+   * Summarize conversation turns using a cheaper model (Haiku).
+   * Used for auto-compression of old conversation history.
+   */
+  async summarize(messages) {
     const response = await this.client.messages.create({
-      model: this.model,
-      max_tokens: this.maxTokens,
-      temperature: this.temperature,
-      system: this.systemPrompt,
-      messages,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      temperature: 0,
+      system: 'Summarize the following conversation concisely in 2-3 paragraphs. Preserve key facts, emotional moments, decisions made, and any promises or plans. Write in the same language(s) the conversation uses.',
+      messages: [
+        {
+          role: 'user',
+          content: messages.map((m) => `${m.role}: ${typeof m.content === 'string' ? m.content : '[media]'}`).join('\n\n'),
+        },
+      ],
     });
 
-    const text = response.content
-      .filter((block) => block.type === 'text')
-      .map((block) => block.text)
+    return response.content
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
       .join('');
-
-    return {
-      text,
-      usage: response.usage,
-      stopReason: response.stop_reason,
-    };
   }
 }
 

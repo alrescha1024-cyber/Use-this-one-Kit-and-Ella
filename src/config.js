@@ -19,6 +19,23 @@ module.exports = {
     apiKey: process.env.ANTHROPIC_API_KEY,
   },
 
+  supabase: {
+    url: process.env.SUPABASE_URL,
+    key: process.env.SUPABASE_KEY,
+  },
+
+  notion: {
+    token: process.env.NOTION_TOKEN,
+    pages: {
+      // Kit
+      kitWorld: '3351f8d2830680dab187e6b664542405',
+      // Corvus
+      corvusSoul: '3351f8d283068168b45aebd8583a702a',
+      corvusHer: '3351f8d2830681649576fc56e4c6c6ca',
+      corvusFamily: '3351f8d28306817098f7c67d90a4a223',
+    },
+  },
+
   kit: {
     telegramToken: process.env.TELEGRAM_KIT_TOKEN,
     model: 'claude-opus-4-6',
@@ -32,7 +49,7 @@ module.exports = {
     model: 'claude-haiku-4-5-20251001',
     temperature: 0.7,
     maxTokens: 4096,
-    systemPrompt: corvusSystemPrompt,
+    systemPrompt: corvusSystemPrompt, // fallback; replaced by Notion content on startup
     botUsername: null, // populated at runtime
   },
 
@@ -44,5 +61,6 @@ module.exports = {
 
   conversation: {
     maxTurns: 30,
+    memoryInjectCount: 15, // recent memories to inject per request
   },
 };

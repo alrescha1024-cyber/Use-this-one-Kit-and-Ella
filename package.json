@@ -9,6 +9,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
+    "@notionhq/client": "^2.2.15",
+    "@supabase/supabase-js": "^2.45.0",
     "dotenv": "^16.4.7",
     "node-telegram-bot-api": "^0.66.0"
   }
