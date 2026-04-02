@@ -60,7 +60,7 @@ module.exports = {
   timezone: 'Australia/Sydney',
 
   conversation: {
-    maxTurns: 30,
+    maxTurns: 50, // Opus has 200K context, no need to be stingy
     memoryInjectCount: 15, // recent memories to inject per request
   },
 };

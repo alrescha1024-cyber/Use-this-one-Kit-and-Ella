@@ -212,7 +212,8 @@ class KitBot {
 
   /**
    * Auto-compress old conversation turns when exceeding maxTurns.
-   * Takes the oldest 10 turns, summarizes them, stores in Supabase.
+   * Takes the oldest 15 turns, summarizes them, and keeps the summary
+   * IN the conversation history so Kit never loses context.
    */
   async _maybeCompress(chatId) {
     const turnCount = this.conversations.getTurnCount(chatId);
@@ -220,16 +221,17 @@ class KitBot {
 
     try {
       const history = this.conversations.getHistory(chatId);
-      const oldMessages = history.slice(0, 20); // 10 turns = 20 messages
+      const compressCount = 30; // 15 turns = 30 messages
+      const oldMessages = history.slice(0, compressCount);
 
       // Summarize using Haiku
       const summary = await this.claude.summarize(oldMessages);
 
-      // Store summary in Supabase
+      // Store summary in Supabase as backup
       await this.memory.store({
         content: `[Conversation Summary] ${summary}`,
         category: 'shared_experience',
-        importance: 5,
+        importance: 6,
         emotionValence: 'neutral',
         decayClass: 'slow',
         tags: ['COMPRESS'],
@@ -237,9 +239,12 @@ class KitBot {
       });
 
       // Remove old messages from active history
-      history.splice(0, 20);
+      history.splice(0, compressCount);
 
-      console.log(`[Kit] Compressed 10 turns for chat ${chatId}`);
+      // KEY FIX: Prepend summary back into history so Kit remembers
+      this.conversations.prependSummary(chatId, summary);
+
+      console.log(`[Kit] Compressed 15 turns for chat ${chatId}. Summary kept in history.`);
     } catch (err) {
       console.error('[Kit] Compression failed:', err.message);
     }
