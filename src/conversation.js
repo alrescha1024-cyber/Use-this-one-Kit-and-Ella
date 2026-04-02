@@ -3,7 +3,7 @@
  * Phase 2: will be backed by Supabase for persistence.
  */
 class ConversationManager {
-  constructor(maxTurns = 30) {
+  constructor(maxTurns = 50) {
     this.maxTurns = maxTurns;
     this.histories = new Map(); // chatId -> messages[]
   }
@@ -20,6 +20,23 @@ class ConversationManager {
     this._add(chatId, 'assistant', text);
   }
 
+  /**
+   * Prepend a summary message at the start of history.
+   * Used after compression to preserve context.
+   */
+  prependSummary(chatId, summary) {
+    const key = String(chatId);
+    if (!this.histories.has(key)) {
+      this.histories.set(key, []);
+    }
+    const history = this.histories.get(key);
+    // Insert as the first two messages (user summary + assistant ack)
+    history.unshift(
+      { role: 'user', content: `[Previous conversation summary]\n${summary}` },
+      { role: 'assistant', content: 'Understood. I remember our conversation.' }
+    );
+  }
+
   _add(chatId, role, content) {
     const key = String(chatId);
     if (!this.histories.has(key)) {
@@ -28,10 +45,11 @@ class ConversationManager {
     const history = this.histories.get(key);
     history.push({ role, content });
 
-    // Trim oldest messages when exceeding maxTurns
-    // Each turn = 1 user + 1 assistant = 2 entries
-    const maxEntries = this.maxTurns * 2;
-    while (history.length > maxEntries) {
+    // Soft limit: don't silently drop messages.
+    // Compression is handled by _maybeCompress in the bot.
+    // Only hard-cap at 2x maxTurns as safety net.
+    const hardCap = this.maxTurns * 2 * 2;
+    while (history.length > hardCap) {
       history.shift();
     }
   }
