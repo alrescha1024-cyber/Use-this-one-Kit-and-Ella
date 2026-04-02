@@ -6,6 +6,8 @@ const ConversationManager = require('./conversation');
 const MemoryManager = require('./supabase');
 const NotionClient = require('./notion');
 const { getKitTools } = require('./tools');
+const { webSearch, webFetch } = require('./web-search');
+const ProactiveScheduler = require('./proactive');
 const config = require('./config');
 
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -28,6 +30,7 @@ class KitBot {
     this.processing = new Set();
     this.botInfo = null;
     this.worldMd = ''; // cached world.md from Notion
+    this.proactive = new ProactiveScheduler(this.bot, this.claude);
   }
 
   async start() {
@@ -36,6 +39,9 @@ class KitBot {
 
     // Load world.md from Notion on startup
     await this._loadWorldMd();
+
+    // Start proactive message scheduler
+    this.proactive.start();
 
     this.bot.on('message', (msg) => this.handleMessage(msg));
 
@@ -72,6 +78,11 @@ class KitBot {
     if (config.allowedUserIds.length > 0 && !config.allowedUserIds.includes(userId)) return;
     if (!msg.text && !msg.photo && !msg.caption) return;
     if (!this.shouldRespond(msg)) return;
+
+    // Track Ella's activity for proactive messages
+    if (msg.chat.type === 'private') {
+      this.proactive.recordActivity(chatId);
+    }
 
     // Commands
     if (msg.text === '/start') {
@@ -184,6 +195,14 @@ class KitBot {
 
       case 'read_notion_page': {
         return await this.notion.readPage(input.page_id);
+      }
+
+      case 'web_search': {
+        return await webSearch(input.query, input.limit || 5);
+      }
+
+      case 'web_fetch': {
+        return await webFetch(input.url);
       }
 
       default:

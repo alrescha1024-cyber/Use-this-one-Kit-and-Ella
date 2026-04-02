@@ -69,6 +69,43 @@ const memoryTools = [
   },
 ];
 
+const webTools = [
+  {
+    name: 'web_search',
+    description:
+      'Search the web for current information using DuckDuckGo. Use this for news, facts, technical docs, or anything you need to look up. Returns top results with titles, URLs, and snippets.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max number of results. Default 5.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'web_fetch',
+    description:
+      'Fetch the text content of a specific URL. Use this to read full articles, documentation, or web pages. Returns stripped text (no HTML).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: {
+          type: 'string',
+          description: 'The URL to fetch.',
+        },
+      },
+      required: ['url'],
+    },
+  },
+];
+
 const notionTools = [
   {
     name: 'read_notion_page',
@@ -88,12 +125,12 @@ const notionTools = [
 ];
 
 function getKitTools() {
-  return [...memoryTools, ...notionTools];
+  return [...memoryTools, ...notionTools, ...webTools];
 }
 
 function getCorvusTools() {
-  // Corvus gets Notion tools only (for now)
-  return [...notionTools];
+  // Corvus gets Notion + web tools
+  return [...notionTools, ...webTools];
 }
 
 module.exports = { getKitTools, getCorvusTools };
