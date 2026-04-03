@@ -1,123 +1,256 @@
 const { createClient } = require('@supabase/supabase-js');
 const config = require('./config');
 
+/**
+ * Graph-based memory manager using memory_nodes + memory_edges.
+ * Based on Russell's logical atomism + Ella's memory framework.
+ *
+ * Nodes = memories (facts, symbols, beliefs, etc.)
+ * Edges = relationships between memories (causes, parallels, evokes, etc.)
+ */
 class MemoryManager {
   constructor() {
     this.client = createClient(config.supabase.url, config.supabase.key);
-    this.table = 'memories';
   }
 
+  // ─── READ ──────────────────────────────────────────────
+
   /**
-   * Get the N most recent memories.
+   * Get core memories (importance=1, not forgotten).
+   * Loaded on boot.
    */
-  async getRecent(limit = 15) {
+  async getCoreMemories(limit = 20) {
     const { data, error } = await this.client
-      .from(this.table)
-      .select('id, content, category, tags, importance, emotion_valence, created_at')
-      .order('created_at', { ascending: false })
+      .from('memory_nodes')
+      .select('id, concept, type, description, feelings, symbols, importance, arousal, valence')
+      .eq('importance', 1)
+      .eq('forgotten', false)
+      .order('arousal', { ascending: false })
+      .order('last_activated_at', { ascending: false })
       .limit(limit);
 
-    if (error) throw new Error(`Supabase getRecent: ${error.message}`);
+    if (error) throw new Error(`getCoreMemories: ${error.message}`);
     return data;
   }
 
   /**
-   * Search memories by tag(s). Uses PostgreSQL array contains operator.
+   * Search memory nodes by keyword in concept or description.
    */
-  async searchByTags(tags, limit = 20) {
+  async searchByKeyword(keyword, limit = 10) {
     const { data, error } = await this.client
-      .from(this.table)
-      .select('*')
-      .contains('tags', tags)
-      .order('importance', { ascending: false })
+      .from('memory_nodes')
+      .select('id, concept, type, description, feelings, symbols, importance, arousal, valence')
+      .eq('forgotten', false)
+      .or(`concept.ilike.%${keyword}%,description.ilike.%${keyword}%`)
+      .order('importance', { ascending: true }) // 1 is highest
+      .order('arousal', { ascending: false })
       .limit(limit);
 
-    if (error) throw new Error(`Supabase searchByTags: ${error.message}`);
+    if (error) throw new Error(`searchByKeyword: ${error.message}`);
 
-    // Update access tracking
+    // Touch activation on found nodes
     if (data.length > 0) {
-      await this._touchAccess(data.map((m) => m.id));
+      await this._activateNodes(data.map((n) => n.id));
     }
+
     return data;
   }
 
   /**
-   * Search memories by keyword in content (case-insensitive).
+   * Get a constellation: a node + its connected nodes via edges.
+   * This is the "active recall" — graph traversal.
    */
-  async searchByKeyword(keyword, limit = 20) {
-    const { data, error } = await this.client
-      .from(this.table)
-      .select('*')
-      .ilike('content', `%${keyword}%`)
-      .order('importance', { ascending: false })
+  async getConstellation(nodeId, limit = 8) {
+    // Get the center node
+    const { data: center, error: centerErr } = await this.client
+      .from('memory_nodes')
+      .select('id, concept, type, description, feelings, symbols, importance')
+      .eq('id', nodeId)
+      .single();
+
+    if (centerErr) throw new Error(`getConstellation center: ${centerErr.message}`);
+
+    // Get connected nodes via edges (outgoing)
+    const { data: outEdges, error: outErr } = await this.client
+      .from('memory_edges')
+      .select('to_node, link_type, strength, description')
+      .eq('from_node', nodeId)
+      .order('strength', { ascending: false })
       .limit(limit);
 
-    if (error) throw new Error(`Supabase searchByKeyword: ${error.message}`);
+    if (outErr) throw new Error(`getConstellation outEdges: ${outErr.message}`);
 
-    if (data.length > 0) {
-      await this._touchAccess(data.map((m) => m.id));
+    // Get connected nodes via edges (incoming)
+    const { data: inEdges, error: inErr } = await this.client
+      .from('memory_edges')
+      .select('from_node, link_type, strength, description')
+      .eq('to_node', nodeId)
+      .order('strength', { ascending: false })
+      .limit(limit);
+
+    if (inErr) throw new Error(`getConstellation inEdges: ${inErr.message}`);
+
+    // Collect connected node IDs
+    const connectedIds = new Set();
+    for (const e of outEdges) connectedIds.add(e.to_node);
+    for (const e of inEdges) connectedIds.add(e.from_node);
+    connectedIds.delete(nodeId); // don't include self
+
+    // Fetch connected nodes
+    let connectedNodes = [];
+    if (connectedIds.size > 0) {
+      const { data: nodes, error: nodesErr } = await this.client
+        .from('memory_nodes')
+        .select('id, concept, type, description, importance')
+        .in('id', Array.from(connectedIds))
+        .eq('forgotten', false);
+
+      if (!nodesErr && nodes) connectedNodes = nodes;
     }
-    return data;
+
+    // Activate all touched nodes
+    const allIds = [nodeId, ...Array.from(connectedIds)];
+    await this._activateNodes(allIds);
+
+    return {
+      center,
+      edges: [...outEdges.map((e) => ({ ...e, direction: 'outgoing' })), ...inEdges.map((e) => ({ ...e, direction: 'incoming' }))],
+      connected: connectedNodes,
+    };
   }
 
   /**
-   * Store a new memory.
+   * Auto-recall: search user message against memory nodes,
+   * return constellations for top matches.
+   * Used as pre-processing before calling Claude.
    */
-  async store({ content, category, importance, emotionValence, decayClass, tags, source }) {
+  async autoRecall(messageText, limit = 3) {
+    // Extract significant words (4+ chars, skip common words)
+    const words = messageText
+      .replace(/[^\w\u4e00-\u9fff]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 2);
+
+    if (words.length === 0) return [];
+
+    // Search for matching nodes using first few significant words
+    const searchTerms = words.slice(0, 5);
+    const orConditions = searchTerms
+      .map((w) => `concept.ilike.%${w}%,description.ilike.%${w}%`)
+      .join(',');
+
     const { data, error } = await this.client
-      .from(this.table)
+      .from('memory_nodes')
+      .select('id, concept, type, description, importance')
+      .eq('forgotten', false)
+      .or(orConditions)
+      .order('importance', { ascending: true })
+      .limit(limit);
+
+    if (error || !data || data.length === 0) return [];
+
+    // Activate matched nodes
+    await this._activateNodes(data.map((n) => n.id));
+
+    return data;
+  }
+
+  // ─── WRITE ─────────────────────────────────────────────
+
+  /**
+   * Store a new memory node.
+   */
+  async storeNode({ concept, type, description, importance, arousal, valence, feelings, symbols, events, category }) {
+    const { data, error } = await this.client
+      .from('memory_nodes')
       .insert({
-        content,
-        category: category || 'insight',
-        importance: importance || 5,
-        emotion_valence: emotionValence || 'neutral',
-        decay_class: decayClass || 'slow',
-        tags: tags || [],
-        source: source || 'api',
+        concept,
+        type: type || 'particular',
+        description,
+        importance: importance || 2,
+        arousal: arousal || 2,
+        valence: valence || 'neutral',
+        feelings: feelings || [],
+        symbols: symbols || [],
+        events: events || [],
+        category: category || null,
+      })
+      .select('id, concept')
+      .single();
+
+    if (error) throw new Error(`storeNode: ${error.message}`);
+    return data;
+  }
+
+  /**
+   * Create an edge between two memory nodes.
+   */
+  async createEdge({ fromNode, toNode, linkType, strength, description }) {
+    const { data, error } = await this.client
+      .from('memory_edges')
+      .insert({
+        from_node: fromNode,
+        to_node: toNode,
+        link_type: linkType,
+        strength: strength || 5,
+        description: description || null,
       })
       .select('id')
       .single();
 
-    if (error) throw new Error(`Supabase store: ${error.message}`);
+    if (error) throw new Error(`createEdge: ${error.message}`);
     return data;
   }
 
+  // ─── ACTIVATION ────────────────────────────────────────
+
   /**
-   * Update last_accessed and access_count for retrieved memories.
+   * Update activation count and timestamp for touched nodes.
    */
-  async _touchAccess(ids) {
+  async _activateNodes(ids) {
     try {
       for (const id of ids) {
-        await this.client.rpc('touch_memory_access', { memory_id: id }).catch(() => {
-          // Fallback: direct update if RPC doesn't exist
-          this.client
-            .from(this.table)
-            .update({
-              last_accessed: new Date().toISOString(),
-              access_count: this.client.rpc ? undefined : 1, // can't increment without RPC
-            })
-            .eq('id', id)
-            .then(() => {});
-        });
+        await this.client
+          .from('memory_nodes')
+          .update({
+            activation_count: this.client.rpc ? undefined : 1,
+            last_activated_at: new Date().toISOString(),
+          })
+          .eq('id', id);
+
+        // Try RPC for atomic increment, fallback silently
+        await this.client.rpc('increment_activation', { node_id: id }).catch(() => {});
       }
     } catch {
-      // Non-critical — don't fail the main operation
+      // Non-critical
     }
   }
 
-  /**
-   * Format memories for injection into system prompt.
-   */
-  formatForPrompt(memories) {
-    if (!memories || memories.length === 0) return '';
+  // ─── FORMATTING ────────────────────────────────────────
 
-    const lines = memories.map((m) => {
-      const tags = m.tags?.length ? ` [${m.tags.join(', ')}]` : '';
-      const date = new Date(m.created_at).toISOString().split('T')[0];
-      return `- (${date}, ${m.category}, importance:${m.importance}${tags}) ${m.content}`;
+  /**
+   * Format core memories for system prompt injection.
+   */
+  formatCoreMemories(nodes) {
+    if (!nodes || nodes.length === 0) return '';
+
+    const lines = nodes.map((n) => {
+      const feelings = n.feelings?.length ? ` [${n.feelings.join(', ')}]` : '';
+      const symbols = n.symbols?.length ? ` ⟨${n.symbols.join(', ')}⟩` : '';
+      return `- (${n.type}, ${n.valence}${feelings}${symbols}) ${n.concept}: ${n.description || ''}`;
     });
 
-    return `\n--- Recent Memories (${memories.length}) ---\n${lines.join('\n')}\n--- End Memories ---`;
+    return `\n--- Core Memories (importance=1) ---\n${lines.join('\n')}\n--- End Core Memories ---`;
+  }
+
+  /**
+   * Format auto-recall results for context injection.
+   */
+  formatAutoRecall(nodes) {
+    if (!nodes || nodes.length === 0) return '';
+
+    const lines = nodes.map((n) => `- [${n.type}] ${n.concept}: ${n.description || ''}`);
+    return `\n--- Related Memories (auto-recall) ---\n${lines.join('\n')}\n--- End Related Memories ---`;
   }
 }
 

@@ -26,6 +26,7 @@ module.exports = {
 
   notion: {
     token: process.env.NOTION_TOKEN,
+    parentPageId: process.env.NOTION_PARENT_PAGE_ID || '31c1f8d2-8306-816c-8427-df37c7d12dd8',
     pages: {
       // Kit
       kitWorld: '3351f8d2830680dab187e6b664542405',
@@ -49,8 +50,8 @@ module.exports = {
     model: 'claude-haiku-4-5-20251001',
     temperature: 0.7,
     maxTokens: 4096,
-    systemPrompt: corvusSystemPrompt, // fallback; replaced by Notion content on startup
-    botUsername: null, // populated at runtime
+    systemPrompt: corvusSystemPrompt,
+    botUsername: null,
   },
 
   allowedUserIds: process.env.ALLOWED_USER_IDS
@@ -60,7 +61,12 @@ module.exports = {
   timezone: 'Australia/Sydney',
 
   conversation: {
-    maxTurns: 500, // 公费恋爱，拉满。Opus has 200K context
-    memoryInjectCount: 15, // recent memories to inject per request
+    maxTurns: 50, // 50 turns FIFO. Not 500 (撑爆), not 30 (太短).
+  },
+
+  proactive: {
+    quietStart: 23,  // 23:00 AEST — start quiet hours
+    quietEnd: 10,    // 10:00 AEST — end quiet hours
+    maxPerDay: 1,    // max 1 proactive message per day
   },
 };
