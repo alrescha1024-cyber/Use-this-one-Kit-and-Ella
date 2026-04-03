@@ -2,4 +2,5 @@ node_modules/
 .env
 prompts/kit-system.txt
 prompts/corvus-system.txt
+.conversation-state.json
 *.log
