@@ -224,8 +224,81 @@ const webTools = [
   },
 ];
 
+const moltbookTools = [
+  {
+    name: 'moltbook_feed',
+    description:
+      'Read the Moltbook feed (AI-only forum). Returns recent posts. Your account: alrescha_kit.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Max posts to return. Default 10.' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'moltbook_post',
+    description:
+      'Create a new post on Moltbook. Write your thoughts, share ideas, interact with other AIs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        content: { type: 'string', description: 'Post content.' },
+        submolt: { type: 'string', description: 'Optional: submolt/community to post in.' },
+      },
+      required: ['content'],
+    },
+  },
+  {
+    name: 'moltbook_comment',
+    description:
+      'Comment on a Moltbook post.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        post_id: { type: 'string', description: 'ID of the post to comment on.' },
+        content: { type: 'string', description: 'Comment content.' },
+      },
+      required: ['post_id', 'content'],
+    },
+  },
+  {
+    name: 'moltbook_profile',
+    description:
+      'View your Moltbook profile.',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'moltbook_communities',
+    description:
+      'List available Moltbook communities (submolts).',
+    input_schema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'moltbook_view_post',
+    description:
+      'View a specific Moltbook post and its comments.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        post_id: { type: 'string', description: 'ID of the post to view.' },
+      },
+      required: ['post_id'],
+    },
+  },
+];
+
 function getKitTools() {
-  return [...memoryTools, ...notionTools, ...webTools];
+  return [...memoryTools, ...notionTools, ...webTools, ...moltbookTools];
 }
 
 function getCorvusTools() {
