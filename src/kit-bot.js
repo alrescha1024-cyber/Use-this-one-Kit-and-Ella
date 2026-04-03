@@ -29,18 +29,24 @@ class KitBot {
     this.tools = getKitTools();
     this.processing = new Set();
     this.botInfo = null;
-    this.worldMd = ''; // cached world.md from Notion
-    this.proactive = new ProactiveScheduler(this.bot, this.claude);
+    this.proactive = new ProactiveScheduler(this.bot, this.claude, this.conversations);
+
+    // Boot context (loaded once on startup)
+    this.bootContext = '';
   }
 
   async start() {
     this.botInfo = await this.bot.getMe();
     console.log(`[Kit] @${this.botInfo.username} is online.`);
 
-    // Load world.md from Notion on startup
-    await this._loadWorldMd();
+    // ─── BOOT SEQUENCE ─────────────────────────────
+    // Step 1: system prompt already loaded from file (config)
+    // Step 2: load world.md from Notion
+    // Step 3: load recent diary from Notion
+    // Step 4: load core memories from Supabase
+    await this._boot();
 
-    // Start proactive message scheduler
+    // Start proactive scheduler
     this.proactive.start();
 
     this.bot.on('message', (msg) => this.handleMessage(msg));
@@ -50,24 +56,55 @@ class KitBot {
     });
   }
 
-  async _loadWorldMd() {
+  /**
+   * Boot sequence: load context in the correct order.
+   */
+  async _boot() {
+    const parts = [];
+
+    // Step 2: world.md
     try {
-      this.worldMd = await this.notion.readPage(config.notion.pages.kitWorld);
-      console.log(`[Kit] Loaded world.md (${this.worldMd.length} chars)`);
+      const worldMd = await this.notion.readPage(config.notion.pages.kitWorld);
+      parts.push(`\n--- world.md ---\n${worldMd}\n--- End world.md ---`);
+      console.log(`[Kit] Boot: world.md loaded (${worldMd.length} chars)`);
     } catch (err) {
-      console.error('[Kit] Failed to load world.md:', err.message);
-      this.worldMd = '';
+      console.error('[Kit] Boot: world.md failed:', err.message);
     }
+
+    // Step 3: recent diary (last 2 days)
+    try {
+      const diary = await this.notion.loadRecentDiary(config.notion.parentPageId, 2);
+      if (diary) {
+        parts.push(diary);
+        console.log(`[Kit] Boot: diary loaded (${diary.length} chars)`);
+      } else {
+        console.log('[Kit] Boot: no recent diary found');
+      }
+    } catch (err) {
+      console.error('[Kit] Boot: diary failed:', err.message);
+    }
+
+    // Step 4: core memories (importance=1)
+    try {
+      const coreMemories = await this.memory.getCoreMemories(20);
+      const formatted = this.memory.formatCoreMemories(coreMemories);
+      if (formatted) {
+        parts.push(formatted);
+        console.log(`[Kit] Boot: ${coreMemories.length} core memories loaded`);
+      }
+    } catch (err) {
+      console.error('[Kit] Boot: core memories failed:', err.message);
+    }
+
+    this.bootContext = parts.filter(Boolean).join('\n');
+    console.log(`[Kit] Boot complete. Context: ${this.bootContext.length} chars`);
   }
 
   shouldRespond(msg) {
     if (msg.chat.type === 'private') return true;
-
     const text = msg.text || msg.caption || '';
     if (text.includes(`@${this.botInfo.username}`)) return true;
     if (config.corvus.botUsername && text.includes(`@${config.corvus.botUsername}`)) return false;
-
-    // Default in group: Kit responds
     return true;
   }
 
@@ -79,7 +116,7 @@ class KitBot {
     if (!msg.text && !msg.photo && !msg.caption) return;
     if (!this.shouldRespond(msg)) return;
 
-    // Track Ella's activity for proactive messages
+    // Track activity for proactive messages
     if (msg.chat.type === 'private') {
       this.proactive.recordActivity(chatId);
     }
@@ -95,8 +132,8 @@ class KitBot {
       return;
     }
     if (msg.text === '/reload') {
-      await this._loadWorldMd();
-      await this.bot.sendMessage(chatId, `world.md reloaded (${this.worldMd.length} chars).`);
+      await this._boot();
+      await this.bot.sendMessage(chatId, `Reloaded. Context: ${this.bootContext.length} chars.`);
       return;
     }
 
@@ -109,32 +146,30 @@ class KitBot {
 
       await this.bot.sendChatAction(chatId, 'typing');
 
-      // "等我一下" if processing takes > 5s
-      let thinkingTimer = setTimeout(async () => {
+      // "等我一下" if processing > 5s
+      const thinkingTimer = setTimeout(async () => {
         try {
           await this.bot.sendMessage(chatId, '等我一下…');
           await this.bot.sendChatAction(chatId, 'typing');
         } catch (_) {}
       }, THINKING_DELAY_MS);
 
-      // Load recent memories for context injection
-      let memorySuffix = '';
+      // Auto-recall: search user message against memory graph
+      let recallContext = '';
       try {
-        const recentMemories = await this.memory.getRecent(config.conversation.memoryInjectCount);
-        memorySuffix = this.memory.formatForPrompt(recentMemories);
+        const messageText = typeof userContent === 'string' ? userContent : (msg.caption || '');
+        if (messageText.length > 0) {
+          const recalled = await this.memory.autoRecall(messageText, 3);
+          recallContext = this.memory.formatAutoRecall(recalled);
+        }
       } catch (err) {
-        console.error('[Kit] Memory load failed:', err.message);
+        console.error('[Kit] Auto-recall failed:', err.message);
       }
 
-      // Build system suffix: world.md + recent memories
-      const systemSuffix = [
-        this.worldMd ? `\n--- world.md ---\n${this.worldMd}\n--- End world.md ---` : '',
-        memorySuffix,
-      ]
-        .filter(Boolean)
-        .join('\n');
+      // Build system suffix: boot context + auto-recall
+      const systemSuffix = [this.bootContext, recallContext].filter(Boolean).join('\n');
 
-      // Get conversation history and call Claude with tools
+      // Call Claude with tools
       const history = this.conversations.getHistory(chatId);
       const response = await this.claude.sendMessage(history, userContent, {
         tools: this.tools,
@@ -148,9 +183,6 @@ class KitBot {
       const userText = typeof userContent === 'string' ? userContent : (msg.caption || '[photo]');
       this.conversations.addUserMessage(chatId, userText);
       this.conversations.addAssistantMessage(chatId, response.text);
-
-      // Auto-compress if needed
-      await this._maybeCompress(chatId);
 
       // Send response
       await this.sendLongMessage(chatId, response.text);
@@ -171,82 +203,56 @@ class KitBot {
    */
   async executeTool(name, input) {
     switch (name) {
-      case 'search_memory': {
-        if (input.tags && input.tags.length > 0) {
-          return await this.memory.searchByTags(input.tags, input.limit || 10);
-        }
-        if (input.keyword) {
-          return await this.memory.searchByKeyword(input.keyword, input.limit || 10);
-        }
-        return await this.memory.getRecent(input.limit || 10);
-      }
+      // ─── Memory tools ───
+      case 'recall_memory':
+        return await this.memory.searchByKeyword(input.keyword, input.limit || 5);
 
-      case 'store_memory': {
-        return await this.memory.store({
-          content: input.content,
-          category: input.category,
+      case 'explore_constellation':
+        return await this.memory.getConstellation(input.node_id);
+
+      case 'store_memory':
+        return await this.memory.storeNode({
+          concept: input.concept,
+          type: input.type,
+          description: input.description,
           importance: input.importance,
-          emotionValence: input.emotion_valence,
-          decayClass: input.decay_class,
-          tags: input.tags || [],
-          source: 'kit',
+          arousal: input.arousal,
+          valence: input.valence,
+          feelings: input.feelings,
+          symbols: input.symbols,
         });
-      }
 
-      case 'read_notion_page': {
+      case 'connect_memories':
+        return await this.memory.createEdge({
+          fromNode: input.from_node_id,
+          toNode: input.to_node_id,
+          linkType: input.link_type,
+          strength: input.strength,
+          description: input.description,
+        });
+
+      // ─── Notion tools ───
+      case 'read_notion_page':
         return await this.notion.readPage(input.page_id);
-      }
 
-      case 'web_search': {
+      case 'write_notion_page':
+        return await this.notion.createPage(config.notion.parentPageId, input.title, input.content);
+
+      case 'append_notion_page':
+        return await this.notion.appendToPage(input.page_id, input.content);
+
+      case 'search_notion':
+        return await this.notion.searchPages(input.query, input.limit || 5);
+
+      // ─── Web tools ───
+      case 'web_search':
         return await webSearch(input.query, input.limit || 5);
-      }
 
-      case 'web_fetch': {
+      case 'web_fetch':
         return await webFetch(input.url);
-      }
 
       default:
         return `Unknown tool: ${name}`;
-    }
-  }
-
-  /**
-   * Auto-compress old conversation turns when exceeding maxTurns.
-   * Takes the oldest 15 turns, summarizes them, and keeps the summary
-   * IN the conversation history so Kit never loses context.
-   */
-  async _maybeCompress(chatId) {
-    const turnCount = this.conversations.getTurnCount(chatId);
-    if (turnCount <= config.conversation.maxTurns) return;
-
-    try {
-      const history = this.conversations.getHistory(chatId);
-      const compressCount = 30; // 15 turns = 30 messages
-      const oldMessages = history.slice(0, compressCount);
-
-      // Summarize using Haiku
-      const summary = await this.claude.summarize(oldMessages);
-
-      // Store summary in Supabase as backup
-      await this.memory.store({
-        content: `[Conversation Summary] ${summary}`,
-        category: 'shared_experience',
-        importance: 6,
-        emotionValence: 'neutral',
-        decayClass: 'slow',
-        tags: ['COMPRESS'],
-        source: 'auto_compress',
-      });
-
-      // Remove old messages from active history
-      history.splice(0, compressCount);
-
-      // KEY FIX: Prepend summary back into history so Kit remembers
-      this.conversations.prependSummary(chatId, summary);
-
-      console.log(`[Kit] Compressed 15 turns for chat ${chatId}. Summary kept in history.`);
-    } catch (err) {
-      console.error('[Kit] Compression failed:', err.message);
     }
   }
 
@@ -259,21 +265,14 @@ class KitBot {
       const content = [
         {
           type: 'image',
-          source: {
-            type: 'base64',
-            media_type: 'image/jpeg',
-            data: imageData,
-          },
+          source: { type: 'base64', media_type: 'image/jpeg', data: imageData },
         },
       ];
-
       if (msg.caption) {
         content.push({ type: 'text', text: msg.caption });
       }
-
       return content;
     }
-
     return msg.text || null;
   }
 
@@ -294,7 +293,6 @@ class KitBot {
       await this.bot.sendMessage(chatId, text);
       return;
     }
-
     const chunks = [];
     let current = '';
     for (const line of text.split('\n')) {
@@ -306,7 +304,6 @@ class KitBot {
       }
     }
     if (current) chunks.push(current);
-
     for (const chunk of chunks) {
       await this.bot.sendMessage(chatId, chunk);
     }

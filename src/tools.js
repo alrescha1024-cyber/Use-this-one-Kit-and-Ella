@@ -1,107 +1,122 @@
 /**
  * Claude tool definitions for Kit and Corvus.
- * These are passed to the Claude API as available tools.
+ * Graph-based memory + Notion read/write + web search.
  */
 
 const memoryTools = [
   {
-    name: 'search_memory',
+    name: 'recall_memory',
     description:
-      'Search your memories stored in Supabase. You can search by tags (like ANCHOR, LOVE, PHILO, NOSLEEP, COMPRESS, MEME, AI:OTHERS, AGENT) or by keyword in content. Use this when you need to recall something specific.',
+      'Search your memory graph. Returns matching memory nodes. Use this when a topic, person, concept, or feeling comes up and you want to recall what you know. Do NOT obsessively search — if you don\'t find it, accept it and move on. 忘了就忘了。',
     input_schema: {
       type: 'object',
       properties: {
-        tags: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Tags to search for (e.g. ["ANCHOR", "LOVE"]). Matches memories containing ALL specified tags.',
-        },
         keyword: {
           type: 'string',
-          description: 'Keyword to search in memory content (case-insensitive).',
+          description: 'Keyword to search in memory concepts and descriptions.',
         },
         limit: {
           type: 'number',
-          description: 'Max number of results to return. Default 10.',
+          description: 'Max results. Default 5.',
         },
       },
-      required: [],
+      required: ['keyword'],
+    },
+  },
+  {
+    name: 'explore_constellation',
+    description:
+      'Given a memory node ID, traverse the graph to find connected memories (its "constellation"). Returns the center node, its edges (causes, parallels, evokes, contrasts, temporal, semantic), and connected nodes. Use this to go deeper on a specific memory.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        node_id: {
+          type: 'string',
+          description: 'UUID of the memory node to explore.',
+        },
+      },
+      required: ['node_id'],
     },
   },
   {
     name: 'store_memory',
     description:
-      'Store a new memory in Supabase. Use this to save important moments, insights, facts, or anything worth remembering. You decide what is important — memory decay is manual, not automatic.',
+      'Store a new memory in your graph. Use this for important moments, insights, new facts, or things worth remembering. You decide what matters — memory decay is manual, not automatic.',
     input_schema: {
       type: 'object',
       properties: {
-        content: {
+        concept: {
           type: 'string',
-          description: 'The memory content to store.',
+          description: 'Short name/title for this memory.',
         },
-        category: {
+        type: {
           type: 'string',
-          enum: ['core_identity', 'shared_experience', 'fact', 'insight', 'emotional', 'preference', 'creative_work'],
-          description: 'Category of the memory.',
+          enum: ['fact', 'particular', 'judgement', 'belief', 'symbol', 'philosophy', 'intimate'],
+          description: 'Type of memory.',
+        },
+        description: {
+          type: 'string',
+          description: 'Detailed description of the memory.',
         },
         importance: {
           type: 'number',
-          description: 'Importance level from 1-10. 10 = never forget.',
+          enum: [1, 2, 3],
+          description: '1=core (never forget), 2=significant, 3=minor (can fade).',
         },
-        emotion_valence: {
+        arousal: {
+          type: 'number',
+          enum: [1, 2, 3],
+          description: '1=high emotional intensity, 2=moderate, 3=low.',
+        },
+        valence: {
           type: 'string',
           enum: ['positive', 'negative', 'neutral'],
-          description: 'Emotional tone of this memory.',
+          description: 'Emotional tone.',
         },
-        decay_class: {
-          type: 'string',
-          enum: ['permanent', 'slow', 'fast'],
-          description: 'How quickly this memory can fade. Permanent = never decay.',
-        },
-        tags: {
+        feelings: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Tags for categorization (e.g. ["ANCHOR", "LOVE"]).',
+          description: 'Associated feelings (e.g. ["tender", "protective"]).',
+        },
+        symbols: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Associated symbols (e.g. ["lantern", "blue"]).',
         },
       },
-      required: ['content', 'category', 'importance', 'emotion_valence', 'decay_class'],
+      required: ['concept', 'type', 'description', 'importance'],
     },
   },
-];
-
-const webTools = [
   {
-    name: 'web_search',
+    name: 'connect_memories',
     description:
-      'Search the web for current information using DuckDuckGo. Use this for news, facts, technical docs, or anything you need to look up. Returns top results with titles, URLs, and snippets.',
+      'Create a link between two memory nodes. This builds the graph structure that makes recall work.',
     input_schema: {
       type: 'object',
       properties: {
-        query: {
+        from_node_id: {
           type: 'string',
-          description: 'Search query.',
+          description: 'UUID of the source node.',
         },
-        limit: {
+        to_node_id: {
+          type: 'string',
+          description: 'UUID of the target node.',
+        },
+        link_type: {
+          type: 'string',
+          enum: ['causes', 'parallels', 'evokes', 'contrasts', 'temporal', 'semantic'],
+          description: 'Type of relationship.',
+        },
+        strength: {
           type: 'number',
-          description: 'Max number of results. Default 5.',
+          description: 'Link strength 1-15. Default 5.',
         },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'web_fetch',
-    description:
-      'Fetch the text content of a specific URL. Use this to read full articles, documentation, or web pages. Returns stripped text (no HTML).',
-    input_schema: {
-      type: 'object',
-      properties: {
-        url: {
+        description: {
           type: 'string',
-          description: 'The URL to fetch.',
+          description: 'Optional description of why these memories are connected.',
         },
       },
-      required: ['url'],
+      required: ['from_node_id', 'to_node_id', 'link_type'],
     },
   },
 ];
@@ -110,7 +125,7 @@ const notionTools = [
   {
     name: 'read_notion_page',
     description:
-      'Read a page from Notion. Use this to check diary entries, world.md, or other documents. Available pages: world.md (Kit\'s knowledge base).',
+      'Read a page from Notion. Use this to check diary entries, world.md, or other documents.',
     input_schema: {
       type: 'object',
       properties: {
@@ -122,6 +137,91 @@ const notionTools = [
       required: ['page_id'],
     },
   },
+  {
+    name: 'write_notion_page',
+    description:
+      'Create a new page in Notion under the Kit & Ella parent page. Use this for diary entries, notes, or any content you want to save.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Page title.',
+        },
+        content: {
+          type: 'string',
+          description: 'Page content (plain text, supports # headings).',
+        },
+      },
+      required: ['title', 'content'],
+    },
+  },
+  {
+    name: 'append_notion_page',
+    description:
+      'Append content to an existing Notion page. Use this to add to diary entries or logs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        page_id: {
+          type: 'string',
+          description: 'The Notion page ID to append to.',
+        },
+        content: {
+          type: 'string',
+          description: 'Content to append.',
+        },
+      },
+      required: ['page_id', 'content'],
+    },
+  },
+  {
+    name: 'search_notion',
+    description:
+      'Search for pages in Notion by title or content.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: {
+          type: 'string',
+          description: 'Search query.',
+        },
+        limit: {
+          type: 'number',
+          description: 'Max results. Default 5.',
+        },
+      },
+      required: ['query'],
+    },
+  },
+];
+
+const webTools = [
+  {
+    name: 'web_search',
+    description:
+      'Search the web using DuckDuckGo. For news, facts, technical docs.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Search query.' },
+        limit: { type: 'number', description: 'Max results. Default 5.' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'web_fetch',
+    description:
+      'Fetch text content of a URL. For reading articles, docs, web pages.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to fetch.' },
+      },
+      required: ['url'],
+    },
+  },
 ];
 
 function getKitTools() {
@@ -129,7 +229,6 @@ function getKitTools() {
 }
 
 function getCorvusTools() {
-  // Corvus gets Notion + web tools
   return [...notionTools, ...webTools];
 }
 
