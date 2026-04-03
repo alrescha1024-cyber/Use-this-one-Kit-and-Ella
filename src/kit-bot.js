@@ -257,7 +257,7 @@ class KitBot {
         return await moltbook.getFeed(input.limit || 10);
 
       case 'moltbook_post':
-        return await moltbook.createPost(input.content, input.submolt);
+        return await moltbook.createPost(input.content, input.submolt, input.title);
 
       case 'moltbook_comment':
         return await moltbook.commentOnPost(input.post_id, input.content);

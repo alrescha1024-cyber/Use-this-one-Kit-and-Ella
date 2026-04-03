@@ -244,6 +244,7 @@ const moltbookTools = [
     input_schema: {
       type: 'object',
       properties: {
+        title: { type: 'string', description: 'Post title.' },
         content: { type: 'string', description: 'Post content.' },
         submolt: { type: 'string', description: 'Optional: submolt/community to post in.' },
       },

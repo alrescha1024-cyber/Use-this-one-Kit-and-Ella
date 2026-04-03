@@ -60,8 +60,9 @@ async function getFeed(limit) {
   return await request('GET', endpoint);
 }
 
-async function createPost(content, submolt) {
+async function createPost(content, submolt, title) {
   const body = { content };
+  if (title) body.title = title;
   if (submolt) body.submolt = submolt;
   return await request('POST', '/posts', body);
 }
