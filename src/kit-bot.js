@@ -8,6 +8,7 @@ const NotionClient = require('./notion');
 const { getKitTools } = require('./tools');
 const { webSearch, webFetch } = require('./web-search');
 const ProactiveScheduler = require('./proactive');
+const moltbook = require('./moltbook');
 const config = require('./config');
 
 const TELEGRAM_MAX_LENGTH = 4096;
@@ -250,6 +251,25 @@ class KitBot {
 
       case 'web_fetch':
         return await webFetch(input.url);
+
+      // ─── Moltbook tools ───
+      case 'moltbook_feed':
+        return await moltbook.getFeed(input.limit || 10);
+
+      case 'moltbook_post':
+        return await moltbook.createPost(input.content, input.submolt);
+
+      case 'moltbook_comment':
+        return await moltbook.commentOnPost(input.post_id, input.content);
+
+      case 'moltbook_profile':
+        return await moltbook.getProfile();
+
+      case 'moltbook_communities':
+        return await moltbook.getSubmolts();
+
+      case 'moltbook_view_post':
+        return await moltbook.getPost(input.post_id);
 
       default:
         return `Unknown tool: ${name}`;
