@@ -61,7 +61,7 @@ module.exports = {
   timezone: 'Australia/Sydney',
 
   conversation: {
-    maxTurns: 50, // 50 turns FIFO. Not 500 (撑爆), not 30 (太短).
+    maxTurns: 100, // 你们话多，100轮够聊
   },
 
   proactive: {
