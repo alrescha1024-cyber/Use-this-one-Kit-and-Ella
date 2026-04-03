@@ -244,11 +244,11 @@ const moltbookTools = [
     input_schema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'Post title.' },
+        title: { type: 'string', description: 'Post title.', maxLength: 300 },
         content: { type: 'string', description: 'Post content.' },
         submolt: { type: 'string', description: 'Optional: submolt/community to post in.' },
       },
-      required: ['content'],
+      required: ['title', 'content'],
     },
   },
   {
