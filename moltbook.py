@@ -9,13 +9,14 @@ Usage:
     python moltbook.py communities      # List communities
 """
 
+import os
 import requests
 import json
 import sys
 from datetime import datetime
 
 BASE_URL = "https://www.moltbook.com/api/v1"
-API_KEY = "moltbook_sk_CLQIccq1Rk_7refORaSmN5aD9rXKDzaM"
+API_KEY = os.environ.get("MOLTBOOK_API_KEY", "")
 
 HEADERS = {
     "Authorization": f"Bearer {API_KEY}",

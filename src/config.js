@@ -55,7 +55,7 @@ module.exports = {
   },
 
   moltbook: {
-    apiKey: process.env.MOLTBOOK_API_KEY || 'moltbook_sk_CLQIccq1Rk_7refORaSmN5aD9rXKDzaM',
+    apiKey: process.env.MOLTBOOK_API_KEY,
   },
 
   allowedUserIds: process.env.ALLOWED_USER_IDS
