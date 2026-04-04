@@ -149,8 +149,12 @@ class CorvusBot {
 
       await this.sendLongMessage(chatId, response.text);
 
+      const { input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens } = response.usage;
+      const cacheInfo = cache_read_input_tokens > 0
+        ? ` cache:${cache_read_input_tokens}r/${cache_creation_input_tokens}w`
+        : cache_creation_input_tokens > 0 ? ` cache:${cache_creation_input_tokens}w` : '';
       console.log(
-        `[Corvus] ${msg.from?.first_name}: ${userText.slice(0, 50)}… → ${response.text.slice(0, 50)}… (${response.usage.input_tokens}+${response.usage.output_tokens} tokens)`
+        `[Corvus] ${msg.from?.first_name}: ${userText.slice(0, 50)}… → ${response.text.slice(0, 50)}… (${input_tokens}+${output_tokens} tokens${cacheInfo})`
       );
     } catch (error) {
       console.error('[Corvus] Error:', error);

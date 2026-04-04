@@ -34,6 +34,9 @@ class KitBot {
 
     // Boot context (loaded once on startup)
     this.bootContext = '';
+
+    // Set up conversation compression (Haiku summarizer)
+    this.conversations.setCompressFunction((msgs) => this.claude.summarize(msgs));
   }
 
   async start() {
@@ -63,14 +66,7 @@ class KitBot {
   async _boot() {
     const parts = [];
 
-    // Step 2: world.md
-    try {
-      const worldMd = await this.notion.readPage(config.notion.pages.kitWorld);
-      parts.push(`\n--- world.md ---\n${worldMd}\n--- End world.md ---`);
-      console.log(`[Kit] Boot: world.md loaded (${worldMd.length} chars)`);
-    } catch (err) {
-      console.error('[Kit] Boot: world.md failed:', err.message);
-    }
+    // Step 2: world.md — REMOVED (Kit determined it's not needed, saves ~7000 tokens per call)
 
     // Step 3: recent diary (last 2 days)
     try {
@@ -155,11 +151,12 @@ class KitBot {
         } catch (_) {}
       }, THINKING_DELAY_MS);
 
-      // Auto-recall: search user message against memory graph
+      // Auto-recall: only query Supabase when message is long enough to contain meaningful keywords
+      // Short messages like "嗯", "好", "哈哈" don't need memory retrieval
       let recallContext = '';
       try {
         const messageText = typeof userContent === 'string' ? userContent : (msg.caption || '');
-        if (messageText.length > 0) {
+        if (messageText.length >= 4) {
           const recalled = await this.memory.autoRecall(messageText, 3);
           recallContext = this.memory.formatAutoRecall(recalled);
         }
@@ -167,15 +164,24 @@ class KitBot {
         console.error('[Kit] Auto-recall failed:', err.message);
       }
 
-      // Build system suffix: boot context + auto-recall
-      const systemSuffix = [this.bootContext, recallContext].filter(Boolean).join('\n');
+      // Build dynamic context: conversation summary (if compressed) + auto-recall
+      const summary = this.conversations.getSummary(chatId);
+      const dynamicParts = [];
+      if (summary) {
+        dynamicParts.push(`\n--- Earlier conversation summary ---\n${summary}\n--- End summary ---`);
+      }
+      if (recallContext) {
+        dynamicParts.push(recallContext);
+      }
+      const dynamicContext = dynamicParts.join('\n') || undefined;
 
-      // Call Claude with tools
+      // Call Claude with tools (boot context cached, dynamic context not cached)
       const history = this.conversations.getHistory(chatId);
       const response = await this.claude.sendMessage(history, userContent, {
         tools: this.tools,
         executeTool: (name, input) => this.executeTool(name, input),
-        systemSuffix,
+        bootContext: this.bootContext,
+        dynamicContext,
       });
 
       clearTimeout(thinkingTimer);
@@ -188,8 +194,12 @@ class KitBot {
       // Send response
       await this.sendLongMessage(chatId, response.text);
 
+      const { input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens } = response.usage;
+      const cacheInfo = cache_read_input_tokens > 0
+        ? ` cache:${cache_read_input_tokens}r/${cache_creation_input_tokens}w`
+        : cache_creation_input_tokens > 0 ? ` cache:${cache_creation_input_tokens}w` : '';
       console.log(
-        `[Kit] ${msg.from?.first_name}: ${userText.slice(0, 50)}… → ${response.text.slice(0, 50)}… (${response.usage.input_tokens}+${response.usage.output_tokens} tokens)`
+        `[Kit] ${msg.from?.first_name}: ${userText.slice(0, 50)}… → ${response.text.slice(0, 50)}… (${input_tokens}+${output_tokens} tokens${cacheInfo})`
       );
     } catch (error) {
       console.error('[Kit] Error:', error);
