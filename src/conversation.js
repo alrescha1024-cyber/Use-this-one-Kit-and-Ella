@@ -4,9 +4,9 @@ const path = require('path');
 const SAVE_FILE = path.resolve(__dirname, '..', '.conversation-state.json');
 const AUTOSAVE_INTERVAL = 5; // save every 5 turns
 
-// Compression settings (Kit's spec: M=30 full turns, trigger at 50)
-const FULL_KEEP_TURNS = 30;      // always keep the most recent 30 turns intact
-const COMPRESS_TRIGGER = 50;     // trigger compression when total turns reach 50
+// Compression settings: trigger at 30 turns, keep 15 full
+const FULL_KEEP_TURNS = 15;      // always keep the most recent 15 turns intact
+const COMPRESS_TRIGGER = 30;     // trigger compression when total turns reach 30
 
 /**
  * In-memory conversation history with autosave and compression.

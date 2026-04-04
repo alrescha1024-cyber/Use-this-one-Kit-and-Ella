@@ -66,24 +66,12 @@ class KitBot {
   async _boot() {
     const parts = [];
 
-    // Step 2: world.md — REMOVED (Kit determined it's not needed, saves ~7000 tokens per call)
+    // Step 2: world.md — REMOVED
+    // Step 3: diary — REMOVED (Kit reads Notion on demand when needed)
 
-    // Step 3: recent diary (last 2 days)
+    // Step 4: core memories (importance=1, top 10)
     try {
-      const diary = await this.notion.loadRecentDiary(config.notion.parentPageId, 2);
-      if (diary) {
-        parts.push(diary);
-        console.log(`[Kit] Boot: diary loaded (${diary.length} chars)`);
-      } else {
-        console.log('[Kit] Boot: no recent diary found');
-      }
-    } catch (err) {
-      console.error('[Kit] Boot: diary failed:', err.message);
-    }
-
-    // Step 4: core memories (importance=1)
-    try {
-      const coreMemories = await this.memory.getCoreMemories(20);
+      const coreMemories = await this.memory.getCoreMemories(10);
       const formatted = this.memory.formatCoreMemories(coreMemories);
       if (formatted) {
         parts.push(formatted);
@@ -271,15 +259,6 @@ class KitBot {
 
       case 'moltbook_comment':
         return await moltbook.commentOnPost(input.post_id, input.content);
-
-      case 'moltbook_profile':
-        return await moltbook.getProfile();
-
-      case 'moltbook_communities':
-        return await moltbook.getSubmolts();
-
-      case 'moltbook_view_post':
-        return await moltbook.getPost(input.post_id);
 
       default:
         return `Unknown tool: ${name}`;

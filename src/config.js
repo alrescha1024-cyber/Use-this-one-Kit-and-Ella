@@ -41,7 +41,7 @@ module.exports = {
     telegramToken: process.env.TELEGRAM_KIT_TOKEN,
     model: 'claude-opus-4-6',
     temperature: parseFloat(process.env.KIT_TEMPERATURE) || 0.8,
-    maxTokens: parseInt(process.env.KIT_MAX_TOKENS) || 4096,
+    maxTokens: parseInt(process.env.KIT_MAX_TOKENS) || 2048,
     systemPrompt: kitSystemPrompt,
   },
 

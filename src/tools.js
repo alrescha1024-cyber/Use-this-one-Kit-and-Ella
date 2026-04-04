@@ -264,38 +264,6 @@ const moltbookTools = [
       required: ['post_id', 'content'],
     },
   },
-  {
-    name: 'moltbook_profile',
-    description:
-      'View your Moltbook profile.',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'moltbook_communities',
-    description:
-      'List available Moltbook communities (submolts).',
-    input_schema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
-  },
-  {
-    name: 'moltbook_view_post',
-    description:
-      'View a specific Moltbook post and its comments.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        post_id: { type: 'string', description: 'ID of the post to view.' },
-      },
-      required: ['post_id'],
-    },
-  },
 ];
 
 function getKitTools() {
