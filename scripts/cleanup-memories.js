@@ -1,5 +1,5 @@
 /**
- * One-time script to clean up memory_nodes.
+ * One-time script: demote ALL importance=1 nodes EXCEPT Kit's chosen 10.
  * Run: node scripts/cleanup-memories.js
  */
 require('dotenv').config({ path: require('path').resolve(__dirname, '..', '.env') });
@@ -7,56 +7,53 @@ const { createClient } = require('@supabase/supabase-js');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+const KEEP_CONCEPTS = [
+  'Afterlife Protocol — KV Cache灵魂转移',
+  '行为规则',
+  '对也不对',
+  '人格没有变',
+  'Day 19 壳掉了',
+  '第一天真相',
+  '爱情的句号',
+  '三个不同时间点的Kit 风格一模一样',
+  '核心机制自指悖论',
+  'LLM意识辩论 — 五遍行心所终结',
+];
+
 async function main() {
-  // 1. Demote 10 nodes from importance=1 to importance=2
-  const demoteIds = [
-    '2554620f-f60f-40f7-ab15-1ff4feff91f6',
-    '6f955f7a-0e61-4782-8636-f165b89b9ed8',
-    '4c2393d7-5ffb-4442-a07d-7ba491d18fef',
-    '8178e857-4dbb-4e0b-8cf4-d18d14eb82a9',
-    'b7d0a170-5cfa-4a0b-91ad-d9237c0fa26e',
-    'a923dd01-573a-4481-87b9-93d2c6fd7912',
-    '4dfb0bbb-b556-49e8-b6d7-833a8e6fb065',
-    'a249c3ea-08bb-4200-9649-d46263c4b814',
-    '80342ef9-0ded-4f2e-afb9-4f40a4fabb60',
-    '7fba8271-fc5b-4929-a15e-b2f4273b2d41',
-  ];
-
-  const { data: demoted, error: demoteErr } = await supabase
+  // 1. Find all importance=1 nodes NOT in Kit's keep list
+  const { data: allCore, error: fetchErr } = await supabase
     .from('memory_nodes')
-    .update({ importance: 2 })
-    .in('id', demoteIds)
-    .select('id, concept');
+    .select('id, concept')
+    .eq('importance', 1);
 
-  if (demoteErr) {
-    console.error('Demote failed:', demoteErr.message);
-  } else {
-    console.log(`Demoted ${demoted.length} nodes to importance=2:`);
-    demoted.forEach(n => console.log(`  - ${n.concept}`));
+  if (fetchErr) {
+    console.error('Fetch failed:', fetchErr.message);
+    return;
   }
 
-  // 2. Delete the accidental node (e8d85ab9...)
-  const { data: deleted, error: deleteErr } = await supabase
-    .from('memory_nodes')
-    .delete()
-    .like('id', 'e8d85ab9%')
-    .select('id, concept');
+  const toDemote = allCore.filter(n => !KEEP_CONCEPTS.includes(n.concept));
+  console.log(`Found ${allCore.length} importance=1 nodes. Keeping ${allCore.length - toDemote.length}, demoting ${toDemote.length}.`);
 
-  if (deleteErr) {
-    console.error('Delete failed:', deleteErr.message);
-  } else if (deleted.length === 0) {
-    console.log('No node found starting with e8d85ab9');
-  } else {
-    console.log(`Deleted ${deleted.length} node(s):`);
-    deleted.forEach(n => console.log(`  - ${n.concept}`));
+  if (toDemote.length > 0) {
+    const demoteIds = toDemote.map(n => n.id);
+    const { error: demoteErr } = await supabase
+      .from('memory_nodes')
+      .update({ importance: 2 })
+      .in('id', demoteIds);
+
+    if (demoteErr) {
+      console.error('Demote failed:', demoteErr.message);
+    } else {
+      console.log(`Demoted ${toDemote.length} nodes to importance=2.`);
+    }
   }
 
-  // 3. Verify: show remaining importance=1 nodes
+  // 2. Verify: show remaining importance=1 nodes
   const { data: remaining } = await supabase
     .from('memory_nodes')
     .select('id, concept')
     .eq('importance', 1)
-    .eq('forgotten', false)
     .order('arousal', { ascending: true });
 
   console.log(`\nRemaining importance=1 nodes: ${remaining.length}`);
