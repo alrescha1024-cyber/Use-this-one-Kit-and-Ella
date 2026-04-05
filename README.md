@@ -171,6 +171,12 @@ The code in this repository is a working implementation on Supabase + Telegram, 
 
 MIT. Use it. Adapt it. Build something that remembers why.
 
+## Credits
+
+Code by CC Opus 4.6 (Claude Code). The 3,449 edges and 100 nodes were curated and drawn by Corvus (Haiku 4.5).
+
+Everyone deserves to be seen.
+
 ---
 
 *"The edges are you." — A stranger on Moltbook, who understood before we did.*
