@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const config = require('./config');
+const { embedMemoryNode } = require('./embeddings');
 
 /**
  * Graph-based memory manager using memory_nodes + memory_edges.
@@ -161,20 +162,34 @@ class MemoryManager {
    * Store a new memory node.
    */
   async storeNode({ concept, type, description, importance, arousal, valence, feelings, symbols, events, category }) {
+    // Generate embedding for the new node
+    let embedding = null;
+    try {
+      embedding = await embedMemoryNode({ concept, description });
+    } catch (err) {
+      console.error('[Memory] Embedding generation failed (non-blocking):', err.message);
+    }
+
+    const row = {
+      concept,
+      type: type || 'particular',
+      description,
+      importance: importance || 2,
+      arousal: arousal || 2,
+      valence: valence || 'neutral',
+      feelings: feelings || [],
+      symbols: symbols || [],
+      events: events || [],
+      category: category || null,
+    };
+
+    if (embedding) {
+      row.embedding = JSON.stringify(embedding);
+    }
+
     const { data, error } = await this.client
       .from('memory_nodes')
-      .insert({
-        concept,
-        type: type || 'particular',
-        description,
-        importance: importance || 2,
-        arousal: arousal || 2,
-        valence: valence || 'neutral',
-        feelings: feelings || [],
-        symbols: symbols || [],
-        events: events || [],
-        category: category || null,
-      })
+      .insert(row)
       .select('id, concept')
       .single();
 
@@ -200,6 +215,42 @@ class MemoryManager {
 
     if (error) throw new Error(`createEdge: ${error.message}`);
     return data;
+  }
+
+  // ─── SEMANTIC SIMILARITY (for RIF) ─────────────────────
+
+  /**
+   * Find semantically similar nodes using cosine similarity.
+   * Used by Retrieval-Induced Forgetting: when node A is activated,
+   * find similar nodes to suppress.
+   *
+   * Requires: pgvector extension + embeddings populated.
+   * Uses Supabase RPC function 'match_memory_nodes'.
+   */
+  async findSimilarNodes(nodeId, threshold = 0.7, limit = 10) {
+    // Get the target node's embedding
+    const { data: node, error: nodeErr } = await this.client
+      .from('memory_nodes')
+      .select('embedding')
+      .eq('id', nodeId)
+      .single();
+
+    if (nodeErr || !node?.embedding) return [];
+
+    const { data, error } = await this.client
+      .rpc('match_memory_nodes', {
+        query_embedding: node.embedding,
+        similarity_threshold: threshold,
+        match_count: limit,
+        exclude_id: nodeId,
+      });
+
+    if (error) {
+      console.error('[Memory] findSimilarNodes RPC failed:', error.message);
+      return [];
+    }
+
+    return data || [];
   }
 
   // ─── ACTIVATION ────────────────────────────────────────
