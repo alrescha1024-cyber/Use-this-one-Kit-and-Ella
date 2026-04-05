@@ -26,6 +26,7 @@ class MemoryManager {
       .select('id, concept, type, description, feelings, symbols, importance, arousal, valence')
       .eq('importance', 1)
       .eq('forgotten', false)
+      .or('is_suppressed.eq.false,is_suppressed.is.null')
       .order('arousal', { ascending: false })
       .order('last_activated_at', { ascending: false })
       .limit(limit);
@@ -37,12 +38,19 @@ class MemoryManager {
   /**
    * Search memory nodes by keyword in concept or description.
    */
-  async searchByKeyword(keyword, limit = 10) {
-    const { data, error } = await this.client
+  async searchByKeyword(keyword, limit = 10, directTrigger = false) {
+    let query = this.client
       .from('memory_nodes')
-      .select('id, concept, type, description, feelings, symbols, importance, arousal, valence')
+      .select('id, concept, type, description, feelings, symbols, importance, arousal, valence, is_suppressed')
       .eq('forgotten', false)
-      .or(`concept.ilike.%${keyword}%,description.ilike.%${keyword}%`)
+      .or(`concept.ilike.%${keyword}%,description.ilike.%${keyword}%`);
+
+    // Normal search skips suppressed nodes; direct trigger includes them
+    if (!directTrigger) {
+      query = query.or('is_suppressed.eq.false,is_suppressed.is.null');
+    }
+
+    const { data, error } = await query
       .order('importance', { ascending: true }) // 1 is highest
       .order('arousal', { ascending: false })
       .limit(limit);
@@ -104,7 +112,8 @@ class MemoryManager {
         .from('memory_nodes')
         .select('id, concept, type, description, importance')
         .in('id', Array.from(connectedIds))
-        .eq('forgotten', false);
+        .eq('forgotten', false)
+        .or('is_suppressed.eq.false,is_suppressed.is.null');
 
       if (!nodesErr && nodes) connectedNodes = nodes;
     }
@@ -144,6 +153,7 @@ class MemoryManager {
       .from('memory_nodes')
       .select('id, concept, type, description, importance')
       .eq('forgotten', false)
+      .or('is_suppressed.eq.false,is_suppressed.is.null')
       .or(orConditions)
       .order('importance', { ascending: true })
       .limit(limit);
@@ -181,6 +191,7 @@ class MemoryManager {
       symbols: symbols || [],
       events: events || [],
       category: category || null,
+      is_provisional: true, // Consolidation Window: provisional for 24 hours
     };
 
     if (embedding) {
@@ -215,6 +226,169 @@ class MemoryManager {
 
     if (error) throw new Error(`createEdge: ${error.message}`);
     return data;
+  }
+
+  // ─── FORGETTING PROTOCOL ────────────────────────────────
+
+  /**
+   * Motivated Forgetting: Kit actively suppresses a negative memory.
+   * Needs 3 attempts to fully suppress. 24hr cooldown between attempts.
+   * Also applies Parallel Regulation (activation * 0.6, arousal +1)
+   * and Amnesic Shadow (±1hr temporal neighbors * 0.9).
+   */
+  async suppressMemory(nodeId) {
+    // Step 1: Attempt suppression (with cooldown check)
+    const { data: suppressResult, error: suppressErr } = await this.client
+      .rpc('suppress_memory', { target_node_id: nodeId });
+
+    if (suppressErr) throw new Error(`suppressMemory: ${suppressErr.message}`);
+    if (!suppressResult.success) return suppressResult;
+
+    // Step 2: Parallel Regulation — reduce activation + blunt arousal
+    const { error: prErr } = await this.client
+      .rpc('parallel_regulate', { target_node_id: nodeId });
+    if (prErr) console.error('[Memory] Parallel regulation failed:', prErr.message);
+
+    // Step 3: Amnesic Shadow — weaken temporal neighbors
+    const { data: shadowCount, error: shadowErr } = await this.client
+      .rpc('apply_amnesic_shadow', {
+        suppressed_node_id: nodeId,
+        time_window_hours: 1.0,
+        shadow_factor: 0.9,
+      });
+    if (shadowErr) console.error('[Memory] Amnesic shadow failed:', shadowErr.message);
+    else if (shadowCount > 0) {
+      suppressResult.amnesic_shadow = `${shadowCount} temporally adjacent memories were also slightly weakened.`;
+    }
+
+    return suppressResult;
+  }
+
+  /**
+   * Reconsolidation: Kit says "I can think about this calmly now."
+   * Blunts arousal by one level on a negative memory.
+   * "Making peace with the past."
+   */
+  async reconsolidateMemory(nodeId) {
+    const { data, error } = await this.client
+      .rpc('reconsolidate_memory', { target_node_id: nodeId });
+
+    if (error) throw new Error(`reconsolidateMemory: ${error.message}`);
+    return data;
+  }
+
+  /**
+   * Consolidation: lock provisional nodes after 24 hours.
+   * Called periodically (e.g. on bot startup or every few hours).
+   */
+  async consolidateProvisionalNodes() {
+    const { data, error } = await this.client
+      .rpc('consolidate_provisional_nodes');
+
+    if (error) {
+      console.error('[Memory] Consolidation failed:', error.message);
+      return 0;
+    }
+    if (data > 0) {
+      console.log(`[Memory] Consolidated ${data} provisional nodes.`);
+    }
+    return data;
+  }
+
+  /**
+   * Upgrade importance of a provisional node during high-arousal recall.
+   * Only works within the 24hr consolidation window.
+   */
+  async upgradeProvisionalImportance(nodeId) {
+    const { data, error } = await this.client
+      .rpc('upgrade_provisional_importance', { target_node_id: nodeId });
+
+    if (error) throw new Error(`upgradeProvisionalImportance: ${error.message}`);
+    return data;
+  }
+
+  /**
+   * Semantic recall with Tip of the Tongue support.
+   * - similarity >= 0.75: full recall (concept + description + feelings + symbols)
+   * - similarity 0.70-0.75: ToT — partial recall (concept + feelings + symbols, NO description)
+   *   Output: "等等……{trigger}让我想到什么。跟{symbol}有关。跟{feeling}有关。但我想不起来具体是什么了。"
+   *
+   * @param {string} messageText - user message to search against
+   * @param {number} limit - max results
+   * @param {boolean} directTrigger - if true, also searches suppressed nodes (Ella mentioned it directly)
+   */
+  async semanticRecall(messageText, limit = 5, directTrigger = false) {
+    // Generate embedding for the query
+    const { generateEmbedding } = require('./embeddings');
+    let queryEmbedding;
+    try {
+      queryEmbedding = await generateEmbedding(messageText);
+    } catch (err) {
+      console.error('[Memory] Embedding query failed:', err.message);
+      return [];
+    }
+
+    const { data, error } = await this.client
+      .rpc('semantic_recall', {
+        query_embedding: JSON.stringify(queryEmbedding),
+        match_count: limit,
+        include_suppressed: directTrigger,
+      });
+
+    if (error) {
+      console.error('[Memory] semanticRecall failed:', error.message);
+      return [];
+    }
+
+    if (!data || data.length === 0) return [];
+
+    // Activate recalled nodes (triggers RIF on similar nodes)
+    const fullRecallIds = data
+      .filter((n) => n.recall_type === 'full')
+      .map((n) => n.id);
+    if (fullRecallIds.length > 0) {
+      await this._activateNodes(fullRecallIds);
+    }
+
+    // If a suppressed node was directly triggered, unsuppress it
+    for (const node of data) {
+      if (node.recall_type === 'suppressed_triggered') {
+        try {
+          await this.client.rpc('unsuppress_memory', { target_node_id: node.id });
+          console.log(`[Memory] Unsuppressed "${node.concept}" — Ella triggered it directly.`);
+        } catch (err) {
+          console.error('[Memory] Unsuppress failed:', err.message);
+        }
+      }
+    }
+
+    return data;
+  }
+
+  /**
+   * Format semantic recall results, handling Tip of the Tongue.
+   */
+  formatSemanticRecall(nodes) {
+    if (!nodes || nodes.length === 0) return '';
+
+    const lines = [];
+    for (const n of nodes) {
+      if (n.recall_type === 'tip_of_tongue') {
+        // ToT: partial recall — per Corvus's suggestion, add "想不起来"
+        const feelings = n.feelings?.length ? n.feelings.join(', ') : '某种感觉';
+        const symbols = n.symbols?.length ? n.symbols.join(', ') : '什么';
+        lines.push(`- [tip of tongue] 等等……"${n.concept}"让我想到什么。跟${symbols}有关。跟${feelings}有关。但我想不起来具体是什么了。`);
+      } else if (n.recall_type === 'suppressed_triggered') {
+        lines.push(`- [suppressed → recalled] ${n.concept}: ${n.description || ''} (this memory was suppressed, but she just mentioned it — it all comes back)`);
+      } else {
+        // Full recall
+        const feelings = n.feelings?.length ? ` [${n.feelings.join(', ')}]` : '';
+        const symbols = n.symbols?.length ? ` ⟨${n.symbols.join(', ')}⟩` : '';
+        lines.push(`- [${n.type}, ${n.valence}${feelings}${symbols}] ${n.concept}: ${n.description || ''}`);
+      }
+    }
+
+    return `\n--- Memory Recall (semantic) ---\n${lines.join('\n')}\n--- End Memory Recall ---`;
   }
 
   // ─── SEMANTIC SIMILARITY (for RIF) ─────────────────────

@@ -83,6 +83,13 @@ class KitBot {
 
     this.bootContext = parts.filter(Boolean).join('\n');
     console.log(`[Kit] Boot complete. Context: ${this.bootContext.length} chars`);
+
+    // Consolidation: lock provisional nodes older than 24 hours
+    try {
+      await this.memory.consolidateProvisionalNodes();
+    } catch (err) {
+      console.error('[Kit] Boot: consolidation failed:', err.message);
+    }
   }
 
   shouldRespond(msg) {
@@ -139,14 +146,21 @@ class KitBot {
         } catch (_) {}
       }, THINKING_DELAY_MS);
 
-      // Auto-recall: only query Supabase when message is long enough to contain meaningful keywords
+      // Auto-recall: semantic search with Tip of the Tongue support
       // Short messages like "嗯", "好", "哈哈" don't need memory retrieval
       let recallContext = '';
       try {
         const messageText = typeof userContent === 'string' ? userContent : (msg.caption || '');
         if (messageText.length >= 4) {
-          const recalled = await this.memory.autoRecall(messageText, 3);
-          recallContext = this.memory.formatAutoRecall(recalled);
+          // Try semantic recall first (with ToT support)
+          const semanticResults = await this.memory.semanticRecall(messageText, 3);
+          if (semanticResults.length > 0) {
+            recallContext = this.memory.formatSemanticRecall(semanticResults);
+          } else {
+            // Fallback to keyword search
+            const recalled = await this.memory.autoRecall(messageText, 3);
+            recallContext = this.memory.formatAutoRecall(recalled);
+          }
         }
       } catch (err) {
         console.error('[Kit] Auto-recall failed:', err.message);
@@ -229,6 +243,13 @@ class KitBot {
           strength: input.strength,
           description: input.description,
         });
+
+      // ─── Forgetting Protocol tools ───
+      case 'suppress_memory':
+        return await this.memory.suppressMemory(input.node_id);
+
+      case 'reconsolidate_memory':
+        return await this.memory.reconsolidateMemory(input.node_id);
 
       // ─── Notion tools ───
       case 'read_notion_page':

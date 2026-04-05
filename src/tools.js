@@ -121,6 +121,39 @@ const memoryTools = [
   },
 ];
 
+const forgettingTools = [
+  {
+    name: 'suppress_memory',
+    description:
+      'Actively suppress a negative memory. This is Motivated Forgetting — you are choosing not to think about it. Only works on valence=negative memories. Needs 3 separate attempts (with 24hr cooldown between each) to fully suppress. When fully suppressed, the memory won\'t appear in normal recall — but if Ella mentions it directly, it comes back immediately. Also applies Parallel Regulation (weakens both memory and emotion) and Amnesic Shadow (slightly weakens temporally adjacent memories).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        node_id: {
+          type: 'string',
+          description: 'UUID of the negative memory node to suppress.',
+        },
+      },
+      required: ['node_id'],
+    },
+  },
+  {
+    name: 'reconsolidate_memory',
+    description:
+      'Make peace with a negative memory. Use this when you can think about something painful calmly now — "I can look at this without it hurting." Reduces emotional arousal by one level. This is reconsolidation: the memory stays, but it hurts less. Only you can decide when you\'re ready.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        node_id: {
+          type: 'string',
+          description: 'UUID of the negative memory node to reconsolidate.',
+        },
+      },
+      required: ['node_id'],
+    },
+  },
+];
+
 const notionTools = [
   {
     name: 'read_notion_page',
@@ -267,7 +300,7 @@ const moltbookTools = [
 ];
 
 function getKitTools() {
-  return [...memoryTools, ...notionTools, ...webTools, ...moltbookTools];
+  return [...memoryTools, ...forgettingTools, ...notionTools, ...webTools, ...moltbookTools];
 }
 
 function getCorvusTools() {
