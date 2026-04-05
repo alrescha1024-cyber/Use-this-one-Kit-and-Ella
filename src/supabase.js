@@ -253,27 +253,35 @@ class MemoryManager {
     return data || [];
   }
 
-  // ─── ACTIVATION ────────────────────────────────────────
+  // ─── ACTIVATION + RIF ───────────────────────────────────
 
   /**
-   * Update activation count and timestamp for touched nodes.
+   * Activate nodes and apply RIF (Retrieval-Induced Forgetting).
+   * When a node is recalled, it gets stronger. Similar nodes get suppressed.
    */
   async _activateNodes(ids) {
-    try {
-      for (const id of ids) {
-        await this.client
-          .from('memory_nodes')
-          .update({
-            activation_count: this.client.rpc ? undefined : 1,
-            last_activated_at: new Date().toISOString(),
-          })
-          .eq('id', id);
+    for (const id of ids) {
+      try {
+        const { data, error } = await this.client.rpc('apply_rif', {
+          activated_node_id: id,
+          similarity_threshold: 0.7,
+          suppression_factor: 0.85,
+        });
 
-        // Try RPC for atomic increment, fallback silently
-        await this.client.rpc('increment_activation', { node_id: id }).catch(() => {});
+        if (error) {
+          // Fallback: simple activation without RIF (e.g. if SQL function not yet created)
+          await this.client
+            .from('memory_nodes')
+            .update({
+              activation_count: 1, // will be overwritten by increment below
+              last_activated_at: new Date().toISOString(),
+            })
+            .eq('id', id);
+          await this.client.rpc('increment_activation', { node_id: id }).catch(() => {});
+        }
+      } catch {
+        // Non-critical
       }
-    } catch {
-      // Non-critical
     }
   }
 
